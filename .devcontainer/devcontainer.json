@@ -3,6 +3,10 @@
   "build": {
     "dockerfile": "Dockerfile"
   },
+  "remoteEnv": {
+    "OPENAI_API_KEY": "${{ secrets.OPENAI_SECRET_AIPIPE }}",
+    "OPENAI_BASE_URL": "https://api.aipipe.ai/v1"
+  },
   "features": {
     "ghcr.io/devcontainers/features/common-utils:2": {},
     "ghcr.io/devcontainers/features/python:1": {
