@@ -72,9 +72,18 @@ jobs:
           pip install -r requirements.txt
           pip install playwright==1.40.0
 
-      - name: Install Playwright browser binaries
+      - name: Install Playwright browser binaries (diagnose)
         run: |
-          playwright install --with-deps chromium
+          set -xuo pipefail
+          python -m pip show playwright || pip install --upgrade pip setuptools wheel
+          pip install playwright==1.40.0
+          # Show available disk space and environment
+          df -h || true
+          free -m || true
+          uname -a || true
+          env | sort
+          # run install in verbose mode and capture output
+          playwright install --with-deps chromium 2>&1 | tee playwright-install.log || (echo "playwright install exit $?: see playwright-install.log" && tail -n 200 playwright-install.log && exit 1)
 
       - name: Validate FastAPI app imports
         run: |
