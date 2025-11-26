@@ -36,17 +36,17 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_SECRET_AIPIPE }}
         run: |
           python - <<'PY'
-import os,sys
-k = os.environ.get("OPENAI_API_KEY")
-if not k:
-    print("OPENAI_API_KEY is NOT set in the environment.")
-    sys.exit(1)
-print("OPENAI_API_KEY length:", len(k))
-if k.startswith("aipipe-") or len(k) > 20:
-    print("Looks like a plausible AIPIPE key.")
-else:
-    print("Loaded key, but format is unusual. Please verify secret value.")
-PY
+            import os,sys
+            k = os.environ.get("OPENAI_API_KEY")
+            if not k:
+                print("OPENAI_API_KEY is NOT set in the environment.")
+                sys.exit(1)
+            print("OPENAI_API_KEY length:", len(k))
+            if k.startswith("aipipe-") or len(k) > 20:
+                print("Looks like a plausible AIPIPE key.")
+            else:
+                print("Loaded key, but format is unusual. Please verify secret value.")
+          PY
 
       - name: Ensure apt repos & install base deps (for Playwright + audio)
         shell: bash
