@@ -2,23 +2,22 @@ name: Promptlytics CI (Playwright + Audio + Diagnostics)
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-22.04
 
-    # map the repository secret OPENAI_SECRET_AIPIPE -> runtime OPENAI_API_KEY
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_SECRET_AIPIPE }}
       OPENAI_BASE_URL: "https://api.aipipe.ai/v1"
 
     strategy:
       matrix:
-        python-version: [ "3.11" ]
+        python-version: ["3.11"]
 
     steps:
       - name: Checkout repository
@@ -29,37 +28,35 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      # --- SAFE SECRET CHECK (does NOT print the secret) ---
+      # --- SAFE SECRET CHECK ---
       - name: Verify OPENAI secret is present (safe)
         shell: bash
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_SECRET_AIPIPE }}
         run: |
-          python - <<'PY'
-            import os,sys
-            k = os.environ.get("OPENAI_API_KEY")
-            if not k:
-                print("OPENAI_API_KEY is NOT set in the environment.")
-                sys.exit(1)
-            print("OPENAI_API_KEY length:", len(k))
-            if k.startswith("aipipe-") or len(k) > 20:
-                print("Looks like a plausible AIPIPE key.")
-            else:
-                print("Loaded key, but format is unusual. Please verify secret value.")
-          PY
+          cat > check_secret.py <<'PY'
+import os, sys
+k = os.environ.get("OPENAI_API_KEY")
+if not k:
+    print("OPENAI_API_KEY is NOT set.")
+    sys.exit(1)
+print("OPENAI_API_KEY length:", len(k))
+if k.startswith("aipipe-") or len(k) > 20:
+    print("Looks like a plausible AIPIPE key.")
+else:
+    print("Key loaded but looks unusual. Verify secret value.")
+PY
+          python check_secret.py
 
       - name: Ensure apt repos & install base deps (for Playwright + audio)
         shell: bash
         run: |
           set -xeuo pipefail
-
-          # Ensure universe is enabled and package lists updated
           sudo apt-get update
           sudo apt-get install -y software-properties-common || true
           sudo add-apt-repository -y universe || true
           sudo apt-get update
 
-          # Base libs commonly required by Chromium/Playwright
           base_pkgs=(
             libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2
             libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 libxss1
@@ -67,75 +64,53 @@ jobs:
             libgtk-3-0 libgbm1 ca-certificates wget apt-transport-https
           )
 
-          echo "Installing base packages..."
           sudo apt-get install -y --no-install-recommends "${base_pkgs[@]}"
 
-          # Audio provider candidates (choose first available)
           audio_candidates=( libasound2t64 libasound2-plugins libasound2 liboss4-salsa-asound2 )
 
           found_audio=""
           for p in "${audio_candidates[@]}"; do
-            if apt-cache show "$p" >/dev/null 2>&1; then
-              echo "Installing audio package: $p"
+            if apt-cache show "$p" > /dev/null 2>&1; then
               sudo apt-get install -y --no-install-recommends "$p"
               found_audio="$p"
               break
-            else
-              echo "Audio package not found in apt-cache: $p"
             fi
           done
 
           if [ -z "$found_audio" ]; then
-            echo "ERROR: No audio provider package found in apt repositories."
-            echo "apt-cache search libasound | head -n 50:"
-            apt-cache search libasound | head -n 50 || true
+            echo "ERROR: No audio provider found."
             exit 1
           fi
 
-          # Helpful small audio utilities (non-fatal)
           sudo apt-get install -y --no-install-recommends pulseaudio-utils || true
-
-          # Basic cleanup
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
 
       - name: Print environment diagnostics (pre-install)
-        shell: bash
         run: |
-          echo "=== Disk usage ==="
           df -h || true
-          echo
-          echo "=== Memory ==="
           free -m || true
-          echo
-          echo "=== uname ==="
           uname -a || true
-          echo
-          echo "=== Python & pip ==="
           python -V
           python -m pip --version || true
 
       - name: Install Python deps (pip)
-        shell: bash
         run: |
-          set -xeuo pipefail
           python -m pip install --upgrade pip setuptools wheel
           pip install -r requirements.txt
           pip install playwright==1.40.0
 
-      # Use official Playwright Action to handle a lot of edge cases and OS deps
-      - name: Use Microsoft Playwright Action (install browsers & deps)
+      - name: Use Microsoft Playwright Action
         uses: microsoft/playwright-github-action@v1
         with:
           browser: chromium
           verbose: true
 
-      - name: Playwright install (retry + capture logs)
+      - name: Playwright install (retry + logs)
         id: playwright_install
         shell: bash
         run: |
           set -xeuo pipefail
-
           LOGFILE=playwright-install.log
           rm -f "$LOGFILE"
 
@@ -143,68 +118,39 @@ jobs:
           max_tries=3
           until [ $tries -ge $max_tries ]; do
             tries=$((tries+1))
-            echo "Playwright install attempt #$tries"
-            # run install and capture stdout/stderr to log file
             playwright install --with-deps chromium 2>&1 | tee "$LOGFILE"
             EXIT_CODE=${PIPESTATUS[0]}
-
             if [ "$EXIT_CODE" -eq 0 ]; then
-              echo "Playwright install succeeded on attempt #$tries"
+              echo "Playwright install succeeded"
               break
             fi
-
-            echo "Playwright install failed on attempt #$tries with exit code $EXIT_CODE"
-            echo "Last 200 lines of log:"
-            tail -n 200 "$LOGFILE" || true
-            echo "Sleeping before retry..."
+            echo "Retry $tries..."
             sleep $((tries * 10))
           done
 
-          if [ $tries -ge $max_tries ] && ! grep -q "Success" "$LOGFILE" 2>/dev/null; then
-            echo "Playwright install failed after $tries attempts. Showing last 400 lines of log:"
-            tail -n 400 "$LOGFILE" || true
-            # create system diagnostics for artifact upload
-            {
-              echo "=== df -h ==="; df -h || true
-              echo; echo "=== free -m ==="; free -m || true
-              echo; echo "=== uname -a ==="; uname -a || true
-              echo; echo "=== du -sh workspace ==="; du -sh . || true
-              echo; echo "=== apt-cache policy for key pkgs ==="; apt-cache policy libasound2 libasound2t64 || true
-            } > system-diagnostics.txt
+          if [ "$EXIT_CODE" -ne 0 ]; then
+            echo "Playwright failed after $tries attempts."
+            tail -n 200 "$LOGFILE" || true
             exit 1
-          else
-            # create short diagnostics (success case too)
-            {
-              echo "Playwright install succeeded"
-              echo "=== df -h ==="; df -h || true
-              echo; echo "=== free -m ==="; free -m || true
-            } > system-diagnostics.txt
           fi
 
-      - name: Upload Playwright install artifacts (logs + diagnostics)
+      - name: Upload Playwright install artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-install-logs
           path: |
             playwright-install.log
-            system-diagnostics.txt
 
       - name: Validate FastAPI imports
-        shell: bash
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_SECRET_AIPIPE }}
-          OPENAI_BASE_URL: "https://api.aipipe.ai/v1"
         run: |
-          python -c "import app.main; print('FastAPI app loaded successfully')"
+          python -c "import app.main; print('FastAPI OK')"
 
-      - name: Run simple health check with uvicorn (background)
-        shell: bash
+      - name: Run simple health check with uvicorn
         run: |
           nohup uvicorn app.main:app --port 8000 &
           sleep 5
-          # check reachable root (200/404 is ok), return non-zero if connection refused
           curl -sS -I http://localhost:8000 | head -n 1
 
       - name: Final status
-        run: echo "CI completed (see prior steps/logs)."
+        run: echo "CI completed successfully."
