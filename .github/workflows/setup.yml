@@ -11,6 +11,11 @@ jobs:
   build:
     runs-on: ubuntu-22.04
 
+    # map the repository secret OPENAI_SECRET_AIPIPE -> runtime OPENAI_API_KEY
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_SECRET_AIPIPE }}
+      OPENAI_BASE_URL: "https://api.aipipe.ai/v1"
+
     strategy:
       matrix:
         python-version: [ "3.11" ]
@@ -23,6 +28,25 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+
+      # --- SAFE SECRET CHECK (does NOT print the secret) ---
+      - name: Verify OPENAI secret is present (safe)
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_SECRET_AIPIPE }}
+        run: |
+          python - <<'PY'
+import os,sys
+k = os.environ.get("OPENAI_API_KEY")
+if not k:
+    print("OPENAI_API_KEY is NOT set in the environment.")
+    sys.exit(1)
+print("OPENAI_API_KEY length:", len(k))
+if k.startswith("aipipe-") or len(k) > 20:
+    print("Looks like a plausible AIPIPE key.")
+else:
+    print("Loaded key, but format is unusual. Please verify secret value.")
+PY
 
       - name: Ensure apt repos & install base deps (for Playwright + audio)
         shell: bash
@@ -104,7 +128,6 @@ jobs:
         uses: microsoft/playwright-github-action@v1
         with:
           browser: chromium
-          # verbose helps with diagnostics if things go wrong
           verbose: true
 
       - name: Playwright install (retry + capture logs)
@@ -122,7 +145,6 @@ jobs:
             tries=$((tries+1))
             echo "Playwright install attempt #$tries"
             # run install and capture stdout/stderr to log file
-            # use --with-deps to ensure packaged dependencies are considered
             playwright install --with-deps chromium 2>&1 | tee "$LOGFILE"
             EXIT_CODE=${PIPESTATUS[0]}
 
@@ -170,6 +192,9 @@ jobs:
 
       - name: Validate FastAPI imports
         shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_SECRET_AIPIPE }}
+          OPENAI_BASE_URL: "https://api.aipipe.ai/v1"
         run: |
           python -c "import app.main; print('FastAPI app loaded successfully')"
 
