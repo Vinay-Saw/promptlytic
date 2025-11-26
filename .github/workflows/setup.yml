@@ -28,24 +28,24 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      # --- SAFE SECRET CHECK ---
       - name: Verify OPENAI secret is present (safe)
         shell: bash
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_SECRET_AIPIPE }}
         run: |
-          cat > check_secret.py <<'PY'
-import os, sys
-k = os.environ.get("OPENAI_API_KEY")
-if not k:
-    print("OPENAI_API_KEY is NOT set.")
-    sys.exit(1)
-print("OPENAI_API_KEY length:", len(k))
-if k.startswith("aipipe-") or len(k) > 20:
-    print("Looks like a plausible AIPIPE key.")
-else:
-    print("Key loaded but looks unusual. Verify secret value.")
-PY
+          cat << 'EOF' > check_secret.py
+          import os, sys
+          k = os.environ.get("OPENAI_API_KEY")
+          if not k:
+              print("OPENAI_API_KEY is NOT set.")
+              sys.exit(1)
+          print("OPENAI_API_KEY length:", len(k))
+          if k.startswith("aipipe-") or len(k) > 20:
+              print("Looks like a plausible AIPIPE key.")
+          else:
+              print("Key loaded but looks unusual. Verify secret value.")
+          EOF
+
           python check_secret.py
 
       - name: Ensure apt repos & install base deps (for Playwright + audio)
